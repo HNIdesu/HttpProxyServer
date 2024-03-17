@@ -13,6 +13,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     implementation("io.netty:netty-all:4.1.107.Final")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.77")
 }
 
 tasks.test {

@@ -1,5 +1,6 @@
 package com.hnidesu.net.proxy
 
+import X509CertificateGenerator
 import com.hnidesu.log.Logger
 import com.hnidesu.net.proxy.internal.ProxyServerHandler
 import com.hnidesu.net.proxy.internal.TrustAllTrustManager
@@ -11,25 +12,30 @@ import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
 import io.netty.handler.codec.http.HttpObjectAggregator
 import io.netty.handler.codec.http.HttpRequestDecoder
+import okhttp3.ConnectionPool
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import java.net.InetAddress
 import java.net.Proxy
+import java.security.PrivateKey
 import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 
 import javax.net.ssl.SSLContext
 
 class ProxyServer private constructor (
     private val mAddress: InetAddress,
     private val mPort: Int,
-    private val mSSLContext:SSLContext?,
-    private val mOkHttpClientBuilder:OkHttpClient.Builder
+    private val mOkHttpClientBuilder:OkHttpClient.Builder,
+    private val mCertificateUtil:X509CertificateGenerator?=null
 ){
     val TAG:String="ProxyServer"
     private val mLogger=Logger(TAG)
     private var mIsRunning:Boolean=false
     private var mChannelFuture:ChannelFuture?=null
+
     val IsRunning:Boolean
         get() = mIsRunning
     val Port:Int
@@ -44,13 +50,14 @@ class ProxyServer private constructor (
         constructor(port: Int):this(InetAddress.getByName("0.0.0.0"),port)
 
         private val mBuilder:OkHttpClient.Builder = OkHttpClient.Builder()
-        private var mSSLContext:SSLContext?=null
+        private var mCertificateUtil:X509CertificateGenerator?=null
         init {
             val ctx=SSLContext.getInstance("TLS")
             ctx.init(null, arrayOf(TrustAllTrustManager), SecureRandom())
             mBuilder.sslSocketFactory(ctx.socketFactory,TrustAllTrustManager)
                 .protocols(listOf(Protocol.HTTP_1_1))
                 .followRedirects(false)
+                .connectionPool(ConnectionPool(6,1,TimeUnit.MINUTES))
         }
         fun addInterceptor(interceptor:Interceptor):Builder{
             mBuilder.addInterceptor(interceptor)
@@ -62,8 +69,8 @@ class ProxyServer private constructor (
             return this
         }
 
-        fun setSSLContext(ctx:SSLContext):Builder{
-            mSSLContext=ctx
+        fun initSSLContext(certificate: X509Certificate,privateKey: PrivateKey):Builder{
+            mCertificateUtil=X509CertificateGenerator(certificate,privateKey)
             return this
         }
 
@@ -73,7 +80,7 @@ class ProxyServer private constructor (
         }
 
         fun build():ProxyServer{
-            return ProxyServer(mAddress,mPort,mSSLContext,mBuilder)
+            return ProxyServer(mAddress,mPort,mBuilder,mCertificateUtil)
         }
     }
 
@@ -90,7 +97,7 @@ class ProxyServer private constructor (
         if(IsRunning)return
         mBossGroup = NioEventLoopGroup(1)
         mWorkerGroup = NioEventLoopGroup()
-        val proxyServerHandler= ProxyServerHandler(mOkHttpClientBuilder,mWorkerGroup!!)
+        val proxyServerHandler= ProxyServerHandler(mOkHttpClientBuilder, mCertificateUtil)
         mChannelFuture = ServerBootstrap()
             .channel(NioServerSocketChannel::class.java)
             .group(mBossGroup,mWorkerGroup)
