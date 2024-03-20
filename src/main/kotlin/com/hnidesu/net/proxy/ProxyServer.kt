@@ -1,6 +1,6 @@
 package com.hnidesu.net.proxy
 
-import X509CertificateGenerator
+import com.hnidesu.util.SslContextGenerator
 import com.hnidesu.log.Logger
 import com.hnidesu.net.proxy.internal.ProxyServerHandler
 import com.hnidesu.net.proxy.internal.TrustAllTrustManager
@@ -12,6 +12,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
 import io.netty.handler.codec.http.HttpObjectAggregator
 import io.netty.handler.codec.http.HttpRequestDecoder
+import io.netty.handler.codec.http.HttpResponseEncoder
 import okhttp3.ConnectionPool
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -28,8 +29,8 @@ import javax.net.ssl.SSLContext
 class ProxyServer private constructor (
     private val mAddress: InetAddress,
     private val mPort: Int,
-    private val mOkHttpClientBuilder:OkHttpClient.Builder,
-    private val mCertificateUtil:X509CertificateGenerator?=null
+    private val mOkHttpClient:OkHttpClient,
+    private val mCertificateUtil: SslContextGenerator?=null
 ){
     val TAG:String="ProxyServer"
     private val mLogger=Logger(TAG)
@@ -50,7 +51,7 @@ class ProxyServer private constructor (
         constructor(port: Int):this(InetAddress.getByName("0.0.0.0"),port)
 
         private val mBuilder:OkHttpClient.Builder = OkHttpClient.Builder()
-        private var mCertificateUtil:X509CertificateGenerator?=null
+        private var mCertificateUtil: SslContextGenerator?=null
         init {
             val ctx=SSLContext.getInstance("TLS")
             ctx.init(null, arrayOf(TrustAllTrustManager), SecureRandom())
@@ -70,7 +71,7 @@ class ProxyServer private constructor (
         }
 
         fun initSSLContext(certificate: X509Certificate,privateKey: PrivateKey):Builder{
-            mCertificateUtil=X509CertificateGenerator(certificate,privateKey)
+            mCertificateUtil= SslContextGenerator(certificate,privateKey)
             return this
         }
 
@@ -80,13 +81,13 @@ class ProxyServer private constructor (
         }
 
         fun build():ProxyServer{
-            return ProxyServer(mAddress,mPort,mBuilder,mCertificateUtil)
+            return ProxyServer(mAddress,mPort,mBuilder.build(),mCertificateUtil)
         }
     }
 
     fun close(){
         if(IsRunning){
-            mChannelFuture?.channel()?.closeFuture()?.sync()
+            mChannelFuture?.channel()?.close()?.sync()
             mWorkerGroup?.shutdownGracefully()
             mBossGroup?.shutdownGracefully()
             mIsRunning=false
@@ -97,7 +98,7 @@ class ProxyServer private constructor (
         if(IsRunning)return
         mBossGroup = NioEventLoopGroup(1)
         mWorkerGroup = NioEventLoopGroup()
-        val proxyServerHandler= ProxyServerHandler(mOkHttpClientBuilder, mCertificateUtil)
+        val proxyServerHandler= ProxyServerHandler(mOkHttpClient, mCertificateUtil)
         mChannelFuture = ServerBootstrap()
             .channel(NioServerSocketChannel::class.java)
             .group(mBossGroup,mWorkerGroup)
@@ -107,6 +108,7 @@ class ProxyServer private constructor (
                     client.pipeline()
                         .addLast(HttpRequestDecoder())
                         .addLast(HttpObjectAggregator(10*1024*1024))
+                        .addLast(HttpResponseEncoder())
                         .addLast(proxyServerHandler)
                         .addLast(object:ChannelInboundHandlerAdapter(){
                             override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable?) {

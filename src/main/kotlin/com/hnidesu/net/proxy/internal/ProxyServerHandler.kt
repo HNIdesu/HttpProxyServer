@@ -1,8 +1,8 @@
 package com.hnidesu.net.proxy.internal
 
-import X509CertificateGenerator
+import com.hnidesu.util.SslContextGenerator
 import com.hnidesu.log.Logger
-import io.netty.buffer.Unpooled
+import com.hnidesu.net.proxy.HttpOutputStream
 import io.netty.channel.ChannelHandler.Sharable
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
@@ -12,16 +12,18 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.net.MalformedURLException
 import java.net.URL
-import java.nio.charset.StandardCharsets
 
 @Sharable
 internal class ProxyServerHandler(
-    private val mOkHttpClientBuilder: OkHttpClient.Builder,
-    private val mCertificateUtil:X509CertificateGenerator?=null
+    private val mOkHttpClient: OkHttpClient,
+    private val mCertificateUtil: SslContextGenerator?=null
 ):ChannelInboundHandlerAdapter() {
-    private val TAG:String="HttpRequestHandler"
-    private val mLogger:Logger=Logger(TAG)
+    companion object{
+        private const val TAG:String="HttpRequestHandler"
+    }
 
+    private val mLogger:Logger=Logger(TAG)
+    private val mHttpMethodRequireBody= setOf(HttpMethod.POST,HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE)
     override fun channelRead(clientCtx: ChannelHandlerContext, msg: Any) {
         val httpRequest=msg as FullHttpRequest
         when(httpRequest.method()){
@@ -36,8 +38,8 @@ internal class ProxyServerHandler(
             clientCtx.channel().close()
             return
         }
-        clientCtx.writeAndFlush(Unpooled.wrappedBuffer("HTTP/1.1 200 Connection established\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))) //响应客户端
-        val host=request.headers()["host"].let {
+        clientCtx.writeAndFlush(DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK)) //响应客户端
+        val host=request.uri().let {
             if(it.contains(":"))
                 it.substring(0,it.indexOf(':'))
             else
@@ -46,9 +48,7 @@ internal class ProxyServerHandler(
         clientCtx.pipeline().addFirst(mCertificateUtil.generateSslContext(host).newHandler(clientCtx.alloc()))//用于加解密https流量，将https请求转换为http请求
     }
 
-    private fun handleHttpRequest(clientCtx: ChannelHandlerContext, request: FullHttpRequest){//Serve as a http server
-        if(clientCtx.pipeline().last() !is HttpResponseEncoder)
-            clientCtx.pipeline().addLast(HttpResponseEncoder())//直接输出响应
+    private fun handleHttpRequest(clientCtx: ChannelHandlerContext, request: FullHttpRequest){
         val url=try {
             URL(request.uri())
         }catch (ex:MalformedURLException){
@@ -56,13 +56,15 @@ internal class ProxyServerHandler(
             val host=request.headers()["host"]
             URL("https://$host$path")
         }
-        mOkHttpClientBuilder.build().newCall(Request.Builder().apply {
+        mOkHttpClient.newCall(Request.Builder().apply {
             url(url)
             request.headers().forEach {
                 header(it.key,it.value)
             }
+            if(!request.headers().contains("accept-encoding"))
+                header("accept-encoding","identity")
             val requestBody:RequestBody?
-            if(request.method() == HttpMethod.POST)
+            if(request.method() in mHttpMethodRequireBody)
             {
                 val toRead=request.content().readableBytes()
                 val byteArray=ByteArray(toRead)
@@ -71,25 +73,29 @@ internal class ProxyServerHandler(
             }else
                 requestBody=null
             method(request.method().name(),requestBody)
-            header("accept-encoding","identity")
         }.build()).enqueue(object:Callback{
             override fun onFailure(call: Call, e: IOException) {
-                clientCtx.writeAndFlush(Unpooled.wrappedBuffer("HTTP/1.1 500 Internal Server Error\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)))
+                clientCtx.writeAndFlush(DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR))
                 clientCtx.channel().close()
                 mLogger.debug("连接${url}失败")
             }
             override fun onResponse(call: Call, response: Response) {
-                val httpResponse=DefaultFullHttpResponse(HttpVersion.HTTP_1_1,HttpResponseStatus.valueOf(response.code))
+                val httpResponse=DefaultHttpResponse(HttpVersion.HTTP_1_1,HttpResponseStatus.valueOf(response.code))
                 httpResponse.headers().also {
                     response.headers.forEach{header->
                         it[header.first]=header.second
                     }
                 }
-                response.body.use {body->
-                    if(body!=null)
-                        httpResponse.content().writeBytes(body.bytes())
-                }
                 clientCtx.pipeline().writeAndFlush(httpResponse)
+                response.body.use {body->
+                    if(body!=null){
+                        HttpOutputStream(clientCtx.channel()).use {
+                            val source=body.source()
+                            while (!source.exhausted())
+                                it.write(source)
+                        }
+                    }
+                }
                 response.headers["connection"].also {
                     if(it!=null&&it.lowercase()=="close"){
                         clientCtx.channel().close()
