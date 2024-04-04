@@ -1,4 +1,4 @@
-package com.hnidesu.net.proxy
+package com.hnidesu.net.proxy.internal
 
 import io.netty.buffer.Unpooled
 import io.netty.channel.Channel
@@ -7,7 +7,7 @@ import io.netty.handler.codec.http.LastHttpContent
 import okio.BufferedSource
 import java.io.Closeable
 
-class HttpOutputStream(private val mChannel: Channel,private val mBufferSize:Int=65536) :Closeable{
+internal class HttpOutputStream(private val mChannel: Channel,private val mBufferSize:Int=65536) :Closeable{
     private val mInnerBuffer=ByteArray(mBufferSize)
     private var mPosition=0
     fun flush(){

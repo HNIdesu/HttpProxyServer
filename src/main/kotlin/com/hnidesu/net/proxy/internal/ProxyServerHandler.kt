@@ -2,7 +2,6 @@ package com.hnidesu.net.proxy.internal
 
 import com.hnidesu.util.SslContextGenerator
 import com.hnidesu.log.Logger
-import com.hnidesu.net.proxy.HttpOutputStream
 import io.netty.channel.ChannelHandler.Sharable
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
@@ -77,7 +76,7 @@ internal class ProxyServerHandler(
             override fun onFailure(call: Call, e: IOException) {
                 clientCtx.writeAndFlush(DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR))
                 clientCtx.channel().close()
-                mLogger.debug("连接${url}失败")
+                mLogger.debug("fail to connect to ${url}")
             }
             override fun onResponse(call: Call, response: Response) {
                 val httpResponse=DefaultHttpResponse(HttpVersion.HTTP_1_1,HttpResponseStatus.valueOf(response.code))

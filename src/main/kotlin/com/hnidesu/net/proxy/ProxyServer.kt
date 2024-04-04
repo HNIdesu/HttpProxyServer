@@ -18,6 +18,7 @@ import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Proxy
 import java.security.PrivateKey
 import java.security.SecureRandom
@@ -49,6 +50,7 @@ class ProxyServer private constructor (
 
     class Builder(private val mAddress: InetAddress,private val mPort:Int){
         constructor(port: Int):this(InetAddress.getByName("0.0.0.0"),port)
+        constructor(address: InetSocketAddress):this(address.address,address.port)
 
         private val mBuilder:OkHttpClient.Builder = OkHttpClient.Builder()
         private var mCertificateUtil: SslContextGenerator?=null
@@ -70,7 +72,7 @@ class ProxyServer private constructor (
             return this
         }
 
-        fun initSSLContext(certificate: X509Certificate,privateKey: PrivateKey):Builder{
+        fun initSslContext(certificate: X509Certificate, privateKey: PrivateKey):Builder{
             mCertificateUtil= SslContextGenerator(certificate,privateKey)
             return this
         }

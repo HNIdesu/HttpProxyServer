@@ -9,15 +9,20 @@ import java.security.cert.X509Certificate
 
 fun main() {
     val keyStore= KeyStore.getInstance("PKCS12").apply {
-        ClassLoader.getSystemClassLoader().getResourceAsStream("certificate.pfx").use {`is`->
+        ClassLoader.getSystemClassLoader().getResourceAsStream("certificate.pfx").use { `is`->
             load(`is`, charArrayOf())
         }
     }
-    val privateKey=keyStore.getKey("1", charArrayOf()) as PrivateKey
-    val certificate=keyStore.getCertificate("1") as X509Certificate
+    val privateKey:PrivateKey
+    val certificate:X509Certificate
+    keyStore.aliases().nextElement().also {alias->
+        privateKey=keyStore.getKey(alias, charArrayOf()) as PrivateKey
+        certificate=keyStore.getCertificate(alias) as X509Certificate
+    }
     Logger.setDebug(true)
-    ProxyServer.Builder(InetAddress.getLocalHost(),1111)
-        .initSSLContext(certificate,privateKey)
+    val serverAddress=InetSocketAddress(InetAddress.getLocalHost(),1111)
+    ProxyServer.Builder(serverAddress)
+        .initSslContext(certificate,privateKey)
         .addInterceptor { chain ->
             println("find url ${chain.request().url}")
             chain.proceed(chain.request())
@@ -25,4 +30,5 @@ fun main() {
         .setExternalProxy(Proxy(Proxy.Type.HTTP,InetSocketAddress(InetAddress.getLoopbackAddress(),7890)))
         .build()
         .start()
+    println("Proxy server is listening at $serverAddress")
 }
